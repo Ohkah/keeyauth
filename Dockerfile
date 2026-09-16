@@ -2,25 +2,23 @@ FROM python:3.11-slim
 
 WORKDIR /app
 
-# Instala dependências do sistema
+# Instalar dependências de sistema necessárias para mysqlclient
 RUN apt-get update && apt-get install -y \
-    gcc \
+    pkg-config \
+    default-mysql-client \
     default-libmysqlclient-dev \
+    build-essential \
     && rm -rf /var/lib/apt/lists/*
 
-# Copia requirements e instala dependências Python
+# Copiar requirements e instalar Python dependencies
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Copia arquivos da aplicação
+# Copiar código
 COPY . .
 
-# Exponha a porta
+# Expor porta
 EXPOSE 5000
 
-# Variáveis de ambiente padrão
-ENV FLASK_APP=app.py
-ENV FLASK_ENV=production
-
-# Comando para rodar a aplicação
-CMD ["gunicorn", "--bind", "0.0.0.0:5000", "--workers", "4", "app:app"]
+# Comando para rodar
+CMD ["gunicorn", "-w", "4", "-b", "0.0.0.0:5000", "app:app"]

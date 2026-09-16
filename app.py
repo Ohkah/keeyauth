@@ -18,7 +18,7 @@ app.secret_key = os.getenv('SECRET_KEY', secrets.token_hex(32))
 
 # Configuração do banco de dados
 # Tenta usar MYSQL_URL primeiro (Railway fornece isso)
-MYSQL_URL = os.getenv('MYSQL_URL')
+MYSQL_URL = os.getenv('mysql://root:XGcaQqATgzKjaOeHIwECloXWldYMVRPZ@mysql.railway.internal:3306/railway')
 
 if MYSQL_URL:
     # Parse da URL do MySQL

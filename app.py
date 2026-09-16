@@ -104,9 +104,10 @@ def init_db():
         cursor.close()
         db.close()
         print("✓ Banco de dados inicializado com sucesso")
+        return True
     except Exception as e:
         print(f"✗ Erro ao inicializar banco: {e}")
-        raise
+        return False
 
 def generate_key():
     """Gera uma chave aleatória formatada"""
@@ -128,6 +129,25 @@ def login_required(f):
             return redirect(url_for('login'))
         return f(*args, **kwargs)
     return decorated_function
+
+# ============== ROTA DE INICIALIZAÇÃO ==============
+
+@app.route('/api/init', methods=['GET'])
+def initialize():
+    """Inicializa o banco de dados (APENAS UMA VEZ)"""
+    success = init_db()
+    if success:
+        return jsonify({
+            'success': True,
+            'message': '✓ Banco de dados inicializado com sucesso!',
+            'admin_user': 'admin',
+            'admin_password': 'admin123'
+        }), 200
+    else:
+        return jsonify({
+            'success': False,
+            'message': '✗ Erro ao inicializar banco de dados'
+        }), 500
 
 # ============== ROTAS DE AUTENTICAÇÃO ==============
 

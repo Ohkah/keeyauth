@@ -9,6 +9,7 @@ from functools import wraps
 import secrets
 import json
 from hashlib import sha256
+from urllib.parse import urlparse
 
 load_dotenv()
 
@@ -16,19 +17,31 @@ app = Flask(__name__)
 app.secret_key = os.getenv('SECRET_KEY', secrets.token_hex(32))
 
 # Configuração do banco de dados
-# Railway fornece essas variáveis automaticamente quando você adiciona MySQL
-# Mas também tentamos as variáveis customizadas para compatibilidade
-DB_HOST = os.getenv('MYSQL_HOST') or os.getenv('DB_HOST', 'localhost')
-DB_USER = os.getenv('MYSQL_USER') or os.getenv('DB_USER', 'root')
-DB_PASSWORD = os.getenv('MYSQL_PASSWORD') or os.getenv('DB_PASSWORD', '')
-DB_NAME = os.getenv('MYSQL_DATABASE') or os.getenv('DB_NAME', 'keyauth')
-DB_PORT = int(os.getenv('MYSQL_PORT', 3306))
+# Tenta usar MYSQL_URL primeiro (Railway fornece isso)
+MYSQL_URL = os.getenv('MYSQL_URL')
+
+if MYSQL_URL:
+    # Parse da URL do MySQL
+    parsed = urlparse(MYSQL_URL)
+    DB_HOST = parsed.hostname or 'localhost'
+    DB_USER = parsed.username or 'root'
+    DB_PASSWORD = parsed.password or ''
+    DB_NAME = parsed.path.lstrip('/') or 'railway'
+    DB_PORT = parsed.port or 3306
+else:
+    # Fallback para variáveis individuais
+    DB_HOST = os.getenv('MYSQL_HOST') or os.getenv('DB_HOST', 'localhost')
+    DB_USER = os.getenv('MYSQL_USER') or os.getenv('DB_USER', 'root')
+    DB_PASSWORD = os.getenv('MYSQL_PASSWORD') or os.getenv('DB_PASSWORD', '')
+    DB_NAME = os.getenv('MYSQL_DATABASE') or os.getenv('DB_NAME', 'keyauth')
+    DB_PORT = int(os.getenv('MYSQL_PORT', 3306))
+
+print(f"[DB Config] Host: {DB_HOST}, User: {DB_USER}, Port: {DB_PORT}, DB: {DB_NAME}")
 
 def get_db():
     """Conecta ao banco de dados MySQL"""
     try:
-        # Tenta conectar usando TCP/IP (melhor para Railway)
-        return MySQLdb.connect(
+        conn = MySQLdb.connect(
             host=DB_HOST,
             user=DB_USER,
             passwd=DB_PASSWORD,
@@ -38,8 +51,10 @@ def get_db():
             use_unicode=True,
             autocommit=False
         )
+        return conn
     except Exception as e:
-        print(f"Erro ao conectar ao banco: {e}")
+        print(f"❌ Erro ao conectar ao banco: {e}")
+        print(f"   Host: {DB_HOST}, User: {DB_USER}, Port: {DB_PORT}, DB: {DB_NAME}")
         raise
 
 def init_db():
@@ -48,7 +63,6 @@ def init_db():
         db = get_db()
         cursor = db.cursor()
 
-        # Tabela de administradores
         cursor.execute("""
         CREATE TABLE IF NOT EXISTS admins (
             id INT AUTO_INCREMENT PRIMARY KEY,
@@ -58,7 +72,6 @@ def init_db():
         )
         """)
 
-        # Tabela de chaves
         cursor.execute("""
         CREATE TABLE IF NOT EXISTS keys (
             id INT AUTO_INCREMENT PRIMARY KEY,
@@ -76,7 +89,6 @@ def init_db():
         )
         """)
 
-        # Tabela de uso das chaves
         cursor.execute("""
         CREATE TABLE IF NOT EXISTS key_usage (
             id INT AUTO_INCREMENT PRIMARY KEY,
@@ -146,6 +158,7 @@ def login():
             else:
                 return jsonify({'error': 'Usuário ou senha inválidos'}), 401
         except Exception as e:
+            print(f"❌ Erro no login: {e}")
             return jsonify({'error': f'Erro no servidor: {str(e)}'}), 500
 
     return render_template('login.html')
@@ -164,7 +177,6 @@ def register():
         db = get_db()
         cursor = db.cursor()
 
-        # Verifica se existe algum admin
         cursor.execute("SELECT COUNT(*) as count FROM admins")
         exists = cursor.fetchone()[0] > 0
 
@@ -186,10 +198,12 @@ def register():
         session['user_id'] = admin_id
         session['username'] = username
 
+        print(f"✓ Novo admin registrado: {username}")
         return jsonify({'success': True}), 201
     except MySQLdb.IntegrityError:
         return jsonify({'error': 'Usuário já existe'}), 409
     except Exception as e:
+        print(f"❌ Erro no register: {e}")
         return jsonify({'error': f'Erro no servidor: {str(e)}'}), 500
 
 @app.route('/logout')
@@ -228,7 +242,6 @@ def get_keys():
         cursor.close()
         db.close()
 
-        # Converte datas para strings
         for key in keys:
             key['expires_at'] = key['expires_at'].isoformat() if key['expires_at'] else None
             key['created_at'] = key['created_at'].isoformat() if key['created_at'] else None
@@ -236,6 +249,7 @@ def get_keys():
 
         return jsonify(keys)
     except Exception as e:
+        print(f"❌ Erro ao buscar chaves: {e}")
         return jsonify({'error': f'Erro ao buscar chaves: {str(e)}'}), 500
 
 @app.route('/api/keys', methods=['POST'])
@@ -245,9 +259,9 @@ def create_key():
     data = request.get_json()
 
     name = data.get('name')
-    expires_in_days = data.get('expires_in_days')  # None = nunca expira
-    device_lock = data.get('device_lock')  # None = qualquer dispositivo
-    max_uses = data.get('max_uses')  # None = ilimitado
+    expires_in_days = data.get('expires_in_days')
+    device_lock = data.get('device_lock')
+    max_uses = data.get('max_uses')
 
     if not name:
         return jsonify({'error': 'Nome da chave é obrigatório'}), 400
@@ -272,6 +286,7 @@ def create_key():
         cursor.close()
         db.close()
 
+        print(f"✓ Nova chave criada: {name} ({key_string})")
         return jsonify({
             'id': key_id,
             'key_string': key_string,
@@ -284,6 +299,7 @@ def create_key():
             'created_at': datetime.now().isoformat()
         }), 201
     except Exception as e:
+        print(f"❌ Erro ao criar chave: {e}")
         return jsonify({'error': f'Erro ao criar chave: {str(e)}'}), 500
 
 @app.route('/api/keys/<int:key_id>', methods=['DELETE'])
@@ -294,7 +310,6 @@ def delete_key(key_id):
         db = get_db()
         cursor = db.cursor()
 
-        # Verifica se a chave pertence ao admin
         cursor.execute("SELECT admin_id FROM keys WHERE id = %s", (key_id,))
         result = cursor.fetchone()
 
@@ -309,8 +324,10 @@ def delete_key(key_id):
         cursor.close()
         db.close()
 
+        print(f"✓ Chave deletada: ID {key_id}")
         return jsonify({'success': True}), 200
     except Exception as e:
+        print(f"❌ Erro ao deletar chave: {e}")
         return jsonify({'error': f'Erro ao deletar chave: {str(e)}'}), 500
 
 @app.route('/api/keys/<int:key_id>/toggle', methods=['POST'])
@@ -321,7 +338,6 @@ def toggle_key(key_id):
         db = get_db()
         cursor = db.cursor()
 
-        # Verifica se a chave pertence ao admin
         cursor.execute("SELECT admin_id, is_active FROM keys WHERE id = %s", (key_id,))
         result = cursor.fetchone()
 
@@ -336,8 +352,10 @@ def toggle_key(key_id):
         cursor.close()
         db.close()
 
+        print(f"✓ Chave {key_id} {'ativada' if new_status else 'desativada'}")
         return jsonify({'success': True, 'is_active': new_status}), 200
     except Exception as e:
+        print(f"❌ Erro ao atualizar chave: {e}")
         return jsonify({'error': f'Erro ao atualizar chave: {str(e)}'}), 500
 
 # ============== API DE VALIDAÇÃO (PÚBLICA) ==============
@@ -347,7 +365,7 @@ def validate_key():
     """Valida uma chave (pode ser acessado de qualquer lugar)"""
     data = request.get_json()
     key_string = data.get('key')
-    device_id = data.get('device_id')  # Opcional, para device lock
+    device_id = data.get('device_id')
 
     if not key_string:
         return jsonify({'error': 'Chave é obrigatória'}), 400
@@ -356,7 +374,6 @@ def validate_key():
         db = get_db()
         cursor = db.cursor(MySQLdb.cursors.DictCursor)
 
-        # Busca a chave
         cursor.execute("""
             SELECT id, name, expires_at, device_lock, max_uses, uses, is_active
             FROM keys
@@ -370,39 +387,33 @@ def validate_key():
             db.close()
             return jsonify({'error': 'Chave inválida'}), 401
 
-        # Verifica se está ativa
         if not key['is_active']:
             cursor.close()
             db.close()
             return jsonify({'error': 'Chave desativada'}), 401
 
-        # Verifica expiração
         if key['expires_at'] and datetime.now() > key['expires_at']:
             cursor.close()
             db.close()
             return jsonify({'error': 'Chave expirada'}), 401
 
-        # Verifica device lock
         if key['device_lock'] and device_id:
             if key['device_lock'] != device_id:
                 cursor.close()
                 db.close()
                 return jsonify({'error': 'Chave bloqueada para este dispositivo'}), 401
 
-        # Verifica limite de usos
         if key['max_uses'] and key['uses'] >= key['max_uses']:
             cursor.close()
             db.close()
             return jsonify({'error': 'Limite de usos atingido'}), 401
 
-        # Registra o uso
         ip_address = request.remote_addr
         cursor.execute("""
             INSERT INTO key_usage (key_id, device_id, ip_address)
             VALUES (%s, %s, %s)
         """, (key['id'], device_id, ip_address))
 
-        # Atualiza o contador de usos
         new_uses = key['uses'] + 1
         cursor.execute("""
             UPDATE keys SET uses = %s, last_used = NOW() WHERE id = %s
@@ -412,12 +423,14 @@ def validate_key():
         cursor.close()
         db.close()
 
+        print(f"✓ Chave validada: {key_string} (Usos: {new_uses})")
         return jsonify({
             'valid': True,
             'name': key['name'],
             'remaining_uses': key['max_uses'] - new_uses if key['max_uses'] else None
         }), 200
     except Exception as e:
+        print(f"❌ Erro ao validar chave: {e}")
         return jsonify({'error': f'Erro ao validar chave: {str(e)}'}), 500
 
 @app.route('/api/key-info/<key_string>', methods=['GET'])
@@ -449,6 +462,7 @@ def get_key_info(key_string):
             'remaining_uses': key['max_uses'] - key['uses'] if key['max_uses'] else None
         }), 200
     except Exception as e:
+        print(f"❌ Erro ao buscar informações: {e}")
         return jsonify({'error': f'Erro ao buscar informações: {str(e)}'}), 500
 
 @app.errorhandler(404)
@@ -462,11 +476,9 @@ def server_error(error):
     return jsonify({'error': 'Erro interno do servidor'}), 500
 
 if __name__ == '__main__':
-    # Inicializa o banco de dados
     try:
         init_db()
     except Exception as e:
-        print(f"Aviso: Não foi possível inicializar o banco: {e}")
+        print(f"⚠️  Aviso ao inicializar banco: {e}")
 
-    # Inicia a aplicação
     app.run(debug=False, host='0.0.0.0', port=int(os.getenv('PORT', 5000)))
